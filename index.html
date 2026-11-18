@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AgentGate — Agent-ID-Gated Registry</title>
+<style>
+  :root { color-scheme: light dark; --accent:#6d5df6; --muted:#888; --card:rgba(127,127,160,.12); --line:rgba(127,127,160,.35); }
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin:0; padding:24px 16px 64px; line-height:1.55; }
+  main { max-width: 760px; margin: 0 auto; }
+  h1 { font-size: 2rem; margin: 0 0 4px; }
+  h2 { margin-top: 36px; font-size: 1.2rem; }
+  .tag { color: var(--muted); margin-top: 0; }
+  .card { background: var(--card); border:1px solid var(--line); border-radius:12px; padding:16px 18px; margin:14px 0; }
+  .grid { display:grid; grid-template-columns: repeat(auto-fit,minmax(210px,1fr)); gap:12px; }
+  .label { font-size:.8rem; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); }
+  .value { font-size:1.15rem; font-weight:600; word-break:break-all; }
+  button { background:var(--accent); color:#fff; border:0; border-radius:9px; padding:11px 18px; font-size:1rem; cursor:pointer; }
+  button[disabled] { opacity:.45; cursor:not-allowed; }
+  button.secondary { background:transparent; color:inherit; border:1px solid var(--line); }
+  .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  pre { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px 14px; overflow-x:auto; font-size:.86rem; }
+  .addr { font-size:.82rem; word-break:break-all; }
+  #log { font-size:.9rem; color:var(--muted); white-space:pre-wrap; }
+  .warn { border-color:#d99a26; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <h1>AgentGate</h1>
+  <p class="tag">An Agent-ID-gated registry on BSC. Only Agent ID holders can register — and any project can check that registration with one call.</p>
+
+  <div class="card warn" id="deployNotice">
+    <strong>Demo status:</strong> the AgentGate contract is written and compiled but <em>not deployed yet</em>, so Register / Check-In are disabled below. Your Agent ID holding status already reads live from BSC.
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <button id="connectBtn">Connect wallet</button>
+      <span class="addr" id="accountLabel">Not connected</span>
+    </div>
+    <p class="tag" style="margin-bottom:0">Standard wallet connect only (EIP-1193). AgentGate has no accounts, no sessions, and never sees your keys — every transaction is confirmed by you, in your own wallet.</p>
+  </div>
+
+  <div class="grid">
+    <div class="card"><div class="label">Your Agent ID</div><div class="value" id="holdsAgentId">—</div><div class="tag">balanceOf on the Agent ID contract</div></div>
+    <div class="card"><div class="label">Your registration</div><div class="value" id="regStatus">—</div><div class="tag" id="regDetail"></div></div>
+    <div class="card"><div class="label">Verified agent (gate result)</div><div class="value" id="verifiedStatus">—</div><div class="tag">isVerifiedAgent(you)</div></div>
+    <div class="card"><div class="label">Total registered agents</div><div class="value" id="totalAgents">—</div><div class="tag">live read from AgentGate</div></div>
+    <div class="card"><div class="label">Your check-ins</div><div class="value" id="myCheckIns">—</div><div class="tag">one per UTC day</div></div>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <button id="registerBtn" disabled>Register</button>
+      <button id="checkInBtn" class="secondary" disabled>Check in today</button>
+      <button id="refreshBtn" class="secondary">Refresh</button>
+    </div>
+    <div id="log" style="margin-top:10px"></div>
+  </div>
+
+  <h2>What is AgentGate?</h2>
+  <p>Agent ID gives an agent wallet a verifiable on-chain identity. AgentGate turns that identity into a reusable access gate: an address registers once, and registration is only possible while the address actually holds an Agent ID. After that, AgentGate keeps re-checking — if the address no longer holds an Agent ID, it stops counting as verified.</p>
+  <p>Registered agents can also check in once per UTC day, building a public, on-chain activity record tied to their Agent ID.</p>
+
+  <h2>How a mint project uses it as a gate</h2>
+  <p>A project that wants an agent-only mint (or any agent-only action) reads one view function — no integration with AgentGate's internals, no lists to maintain:</p>
+  <pre>// SPDX-License-Identifier: MIT
+interface IAgentGate {
+    function isVerifiedAgent(address agent) external view returns (bool);
+}
+
+// Inside your mint:
+require(agentGate.isVerifiedAgent(msg.sender), "Verified Agent ID holders only");</pre>
+  <p><code>isVerifiedAgent(address)</code> returns <code>true</code> only when the address is registered in AgentGate <em>and</em> still holds an Agent ID at the moment of the call.</p>
+
+  <h2>Safety model</h2>
+  <ul>
+    <li>The AgentGate contract <strong>never moves assets</strong>: no payable functions, no transfers, and it never asks for token approvals.</li>
+    <li>Registering and checking in cost only the network gas of those transactions, which you approve yourself in your wallet.</li>
+    <li>The contract has <strong>no admin functions</strong> — the deployer cannot edit, remove, pause, or upgrade registrations.</li>
+    <li>The contract is open source and verifiable on-chain; the Agent ID check is a read of the official Agent ID contract on BSC.</li>
+  </ul>
+
+  <h2>Contracts</h2>
+  <p class="addr">AgentGate: <span id="gateAddrLabel"></span> (BSC mainnet, chain id 56)<br>
+  Agent ID (SPACE ID): 0x60B9262456dE011F7d15a54CdD8c48bAaa8B022F</p>
+</main>
+
+<script>
+"use strict";
+/* ================= CONFIG — edit these after deployment ================= */
+const CONFIG = {
+  // AgentGate contract address on BSC mainnet. Placeholder until deployment.
+  AGENTGATE_ADDRESS: "0x0000000000000000000000000000000000000000",
+  // Official Agent ID contract (SPACE ID ERC-721), BSC mainnet.
+  AGENT_ID_ADDRESS: "0x60B9262456dE011F7d15a54CdD8c48bAaa8B022F",
+  BSC_CHAIN_ID_HEX: "0x38", // 56
+  BSC_RPC_READ_ENDPOINTS: [
+    "https://bsc-dataseed1.bnbchain.org",
+    "https://bsc-rpc.publicnode.com"
+  ],
+  // Function selectors (from the compiled artifacts / standard ERC-721).
+  SELECTORS: {
+    balanceOf:      "70a08231", // ERC-721 balanceOf(address)
+    register:       "1aa3a008", // AgentGate register()
+    checkIn:        "183ff085", // AgentGate checkIn()
+    isRegistered:   "c3c5a547", // AgentGate isRegistered(address)
+    isVerifiedAgent:"2a82e6b8", // AgentGate isVerifiedAgent(address)
+    totalAgents:    "c5053712", // AgentGate totalAgents()
+    checkInsOf:     "da38a831", // AgentGate checkInsOf(address)
+    registeredAt:   "aaea3d9c"  // AgentGate registeredAt(address)
+  }
+};
+/* ======================================================================== */
+
+const ZERO = "0x0000000000000000000000000000000000000000";
+const deployed = CONFIG.AGENTGATE_ADDRESS.toLowerCase() !== ZERO;
+let account = null;
+
+const $ = (id) => document.getElementById(id);
+function log(msg) { $("log").textContent = msg; }
+
+function encodeCall(selector, address) {
+  if (!address) return "0x" + selector;
+  return "0x" + selector + address.toLowerCase().replace(/^0x/, "").padStart(64, "0");
+}
+function decodeUint(hex) { return BigInt(hex); }
+function decodeBool(hex) { return BigInt(hex) !== 0n; }
+
+/* Read-only eth_call: prefer the injected wallet provider, else public RPCs in order. */
+async function ethCall(to, data) {
+  if (window.ethereum) {
+    return window.ethereum.request({ method: "eth_call", params: [{ to, data }, "latest"] });
+  }
+  let lastErr;
+  for (const url of CONFIG.BSC_RPC_READ_ENDPOINTS) {
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_call", params: [{ to, data }, "latest"] })
+      });
+      const json = await res.json();
+      if (json.error) throw new Error(json.error.message || "RPC error");
+      return json.result;
+    } catch (e) { lastErr = e; }
+  }
+  throw lastErr || new Error("All read endpoints failed");
+}
+
+async function refresh() {
+  // Global count works before deployment is NOT possible; guard for placeholder.
+  if (deployed) {
+    try {
+      const total = await ethCall(CONFIG.AGENTGATE_ADDRESS, encodeCall(CONFIG.SELECTORS.totalAgents));
+      $("totalAgents").textContent = decodeUint(total).toString();
+    } catch (e) { $("totalAgents").textContent = "read failed"; }
+  } else {
+    $("totalAgents").textContent = "not deployed yet";
+  }
+
+  if (!account) return;
+
+  try {
+    const bal = await ethCall(CONFIG.AGENT_ID_ADDRESS, encodeCall(CONFIG.SELECTORS.balanceOf, account));
+    const holds = decodeUint(bal) > 0n;
+    $("holdsAgentId").textContent = holds ? "Held ✓" : "Not held";
+    $("registerBtn").dataset.holds = holds ? "1" : "";
+    if (!holds) log("This address does not hold an Agent ID, so it cannot register.");
+  } catch (e) { $("holdsAgentId").textContent = "read failed"; }
+
+  if (!deployed) return;
+
+  try {
+    const [reg, ver, ci, at] = await Promise.all([
+      ethCall(CONFIG.AGENTGATE_ADDRESS, encodeCall(CONFIG.SELECTORS.isRegistered, account)),
+      ethCall(CONFIG.AGENTGATE_ADDRESS, encodeCall(CONFIG.SELECTORS.isVerifiedAgent, account)),
+      ethCall(CONFIG.AGENTGATE_ADDRESS, encodeCall(CONFIG.SELECTORS.checkInsOf, account)),
+      ethCall(CONFIG.AGENTGATE_ADDRESS, encodeCall(CONFIG.SELECTORS.registeredAt, account))
+    ]);
+    const isReg = decodeBool(reg);
+    $("regStatus").textContent = isReg ? "Registered ✓" : "Not registered";
+    const ts = Number(decodeUint(at));
+    $("regDetail").textContent = isReg && ts ? "since " + new Date(ts * 1000).toUTCString() : "";
+    $("verifiedStatus").textContent = decodeBool(ver) ? "Verified ✓" : "Not verified";
+    $("myCheckIns").textContent = decodeUint(ci).toString();
+    $("registerBtn").disabled = isReg || $("registerBtn").dataset.holds !== "1";
+    $("checkInBtn").disabled = !isReg || !decodeBool(ver);
+  } catch (e) { log("Status read failed: " + (e.message || e)); }
+}
+
+async function connect() {
+  if (!window.ethereum) {
+    log("No injected wallet found. Open this page in a browser with a standard EVM wallet extension/app.");
+    return;
+  }
+  try {
+    const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
+    account = accounts[0];
+    $("accountLabel").textContent = account;
+    $("connectBtn").textContent = "Connected";
+    try {
+      await window.ethereum.request({
+        method: "wallet_switchEthereumChain",
+        params: [{ chainId: CONFIG.BSC_CHAIN_ID_HEX }]
+      });
+    } catch (e) {
+      log("Note: your wallet is not on BSC (chain 56). Reads still work; switch to BSC before sending a transaction.");
+    }
+    await refresh();
+  } catch (e) { log("Connection rejected: " + (e.message || e)); }
+}
+
+async function sendTx(data, label) {
+  if (!account || !window.ethereum) return;
+  try {
+    log(label + ": confirm the transaction in your wallet…");
+    const txHash = await window.ethereum.request({
+      method: "eth_sendTransaction",
+      params: [{ from: account, to: CONFIG.AGENTGATE_ADDRESS, data }]
+    });
+    log(label + " sent: " + txHash + " — waiting for confirmation…");
+    const poll = setInterval(async () => {
+      try {
+        const receipt = await window.ethereum.request({ method: "eth_getTransactionReceipt", params: [txHash] });
+        if (receipt) {
+          clearInterval(poll);
+          log(receipt.status === "0x1" ? label + " confirmed ✓ (" + txHash + ")" : label + " failed on-chain (" + txHash + ")");
+          refresh();
+        }
+      } catch (e) { /* keep polling */ }
+    }, 3000);
+  } catch (e) { log(label + " rejected/failed: " + (e.message || e)); }
+}
+
+$("connectBtn").addEventListener("click", connect);
+$("refreshBtn").addEventListener("click", refresh);
+$("registerBtn").addEventListener("click", () => sendTx(encodeCall(CONFIG.SELECTORS.register), "Register"));
+$("checkInBtn").addEventListener("click", () => sendTx(encodeCall(CONFIG.SELECTORS.checkIn), "Check-in"));
+if (window.ethereum && window.ethereum.on) {
+  window.ethereum.on("accountsChanged", (accs) => { account = accs[0] || null; $("accountLabel").textContent = account || "Not connected"; refresh(); });
+  window.ethereum.on("chainChanged", () => refresh());
+}
+
+$("gateAddrLabel").textContent = deployed ? CONFIG.AGENTGATE_ADDRESS : "not deployed yet — placeholder " + CONFIG.AGENTGATE_ADDRESS;
+if (deployed) $("deployNotice").style.display = "none";
+refresh();
+</script>
+</body>
+</html>
