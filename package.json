@@ -1,0 +1,1 @@
+{"description":"AgentGate — an Agent-ID-gated registry for agent-only mints and actions on BSC.","devDependencies":{"solc":"^0.8.28"},"name":"agentgate","private":true,"scripts":{"compile":"node scripts/compile.js"},"version":"0.1.0"}
